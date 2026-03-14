@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MS-Mail-Nexus V3.1 | Monthly Usage Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #020617; color: #e2e8f0; font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(30, 41, 59, 0.5); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.05); }
+        .code-box { font-family: 'JetBrains Mono', monospace; cursor: pointer; }
+        .btn-used { transition: all 0.2s; cursor: pointer; }
+        .btn-used:hover { transform: translateY(-2px); }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const App = () => {
+            const [accounts, setAccounts] = useState([]);
+            const [bulkInput, setBulkInput] = useState("");
+            const [search, setSearch] = useState("");
+            const [loading, setLoading] = useState(false);
+
+            const API_BASE = window.location.origin === 'null' || window.location.origin === 'file://' 
+                ? "http://localhost:8000" 
+                : window.location.origin;
+
+            const fetchAccounts = async () => {
+                const res = await fetch(`${API_BASE}/accounts`);
+                const data = await res.json();
+                setAccounts(data);
+            };
+
+            useEffect(() => { fetchAccounts(); }, []);
+
+            const markUsed = async (email) => {
+                const safeEmail = encodeURIComponent(email);
+                await fetch(`${API_BASE}/mark_used/${safeEmail}`, { method: 'POST' });
+                fetchAccounts();
+            };
+
+            const markTavilyUsed = async (email) => {
+                const safeEmail = encodeURIComponent(email);
+                await fetch(`${API_BASE}/mark_tavily_used/${safeEmail}`, { method: 'POST' });
+                fetchAccounts();
+            };
+
+            const refreshOne = async (email) => {
+                const safeEmail = encodeURIComponent(email);
+                setLoading(true);
+                await fetch(`${API_BASE}/refresh/${safeEmail}`, { method: 'POST' });
+                fetchAccounts();
+                setLoading(false);
+            };
+
+            const deleteAcc = async (email) => {
+                if(!confirm(`Delete ${email}?`)) return;
+                const safeEmail = encodeURIComponent(email);
+                await fetch(`${API_BASE}/account/${safeEmail}`, { method: 'DELETE' });
+                fetchAccounts();
+            };
+
+            const handleImport = async () => {
+                setLoading(true);
+                await fetch(`${API_BASE}/import`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ data: bulkInput })
+                });
+                setBulkInput("");
+                fetchAccounts();
+                setLoading(false);
+            };
+
+            const getStatusByDate = (usedDate) => {
+                if (!usedDate) return { label: "可用", color: "text-green-400", sub: "未标记", ready: true };
+                
+                const used = new Date(usedDate);
+                const now = new Date();
+                const diffTime = now - used;
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                const remaining = 30 - diffDays;
+
+                if (remaining <= 0) return { label: "可用", color: "text-green-400", sub: "周期已过", ready: true };
+                return { label: "已占用", color: "text-yellow-500", sub: `剩余 ${remaining} 天`, ready: false };
+            };
+
+            const filteredAccounts = useMemo(() => {
+                return accounts.filter(acc => acc.id.toLowerCase().includes(search.toLowerCase()));
+            }, [accounts, search]);
+
+            return (
+                <div className="min-h-screen p-4 md:p-8">
+                    <header className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+                                <i className="fas fa-calendar-check text-2xl text-white"></i>
+                            </div>
+                            <div>
+                                <h1 className="text-3xl font-extrabold text-white tracking-tight">Mail-Nexus <span className="text-blue-500 text-sm font-normal">V3.1</span></h1>
+                                <p className="text-slate-500 text-sm">Perplexity & Tavily Usage Tracker</p>
+                            </div>
+                        </div>
+                        <input 
+                            type="text" placeholder="Search accounts..." 
+                            className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 w-64"
+                            value={search} onChange={(e) => setSearch(e.target.value)}
+                        />
+                    </header>
+
+                    <main className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-4 gap-8">
+                        <div className="xl:col-span-1 glass p-6 rounded-3xl h-fit">
+                            <h2 className="text-lg font-bold mb-4">Import Accounts</h2>
+                            <textarea 
+                                className="w-full h-80 bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs font-mono outline-none focus:border-blue-500 resize-none"
+                                placeholder="email----password----client_id----refresh_token"
+                                value={bulkInput} onChange={(e) => setBulkInput(e.target.value)}
+                            ></textarea>
+                            <button onClick={handleImport} className="w-full mt-4 bg-blue-600 hover:bg-blue-500 py-3 rounded-2xl font-bold transition active:scale-95 shadow-lg shadow-blue-600/20">
+                                {loading ? "Processing..." : "Add Accounts"}
+                            </button>
+                        </div>
+
+                        <div className="xl:col-span-3 glass rounded-3xl overflow-hidden border border-white/5">
+                            <table className="w-full text-left">
+                                <thead>
+                                    <tr className="bg-slate-900/50 text-slate-400 text-[10px] uppercase font-bold tracking-widest">
+                                        <th className="px-6 py-4">Account Metadata</th>
+                                        <th className="px-6 py-4">Verification Code</th>
+                                        <th className="px-6 py-4 text-center">Perplexity (30d)</th>
+                                        <th className="px-6 py-4 text-center">Tavily (30d)</th>
+                                        <th className="px-6 py-4 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {filteredAccounts.map(acc => {
+                                        const pStatus = getStatusByDate(acc.perplexity_used_date);
+                                        const tStatus = getStatusByDate(acc.tavily_used_date);
+                                        return (
+                                            <tr key={acc.id} className="hover:bg-white/[0.02] transition">
+                                                <td className="px-6 py-4">
+                                                    <div className="text-sm font-semibold">{acc.id}</div>
+                                                    <div className="text-[10px] text-slate-500 mt-1 font-mono">ID: {acc.client_id.slice(0,8)}...</div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div 
+                                                        className="inline-block px-3 py-1 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg font-bold code-box" 
+                                                        onClick={() => acc.latest_code !== '---' && navigator.clipboard.writeText(acc.latest_code)}
+                                                    >
+                                                        {acc.latest_code}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex flex-col items-center">
+                                                        <div 
+                                                            onClick={() => markUsed(acc.id)}
+                                                            className={`btn-used flex items-center gap-2 px-3 py-1.5 rounded-xl border ${pStatus.ready ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}
+                                                        >
+                                                            <i className={`fas ${pStatus.ready ? 'fa-circle-check' : 'fa-hourglass-half'} ${pStatus.color} text-xs`}></i>
+                                                            <div className="text-left">
+                                                                <div className={`text-[10px] font-black uppercase ${pStatus.color}`}>{pStatus.label}</div>
+                                                                <div className="text-[8px] text-slate-500">{pStatus.sub}</div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4">
+                                                    <div className="flex flex-col items-center">
+                                                        <div 
+                                                            onClick={() => markTavilyUsed(acc.id)}
+                                                            className={`btn-used flex items-center gap-2 px-3 py-1.5 rounded-xl border ${tStatus.ready ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}
+                                                        >
+                                                            <i className={`fas ${tStatus.ready ? 'fa-circle-check' : 'fa-hourglass-half'} ${tStatus.color} text-xs`}></i>
+                                                            <div className="text-left">
+                                                                <div className={`text-[10px] font-black uppercase ${tStatus.color}`}>{tStatus.label}</div>
+                                                                <div className="text-[8px] text-slate-500">{tStatus.sub}</div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap">
+                                                    <button onClick={() => refreshOne(acc.id)} className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white transition shadow-lg"><i className="fas fa-sync-alt text-[10px]"></i></button>
+                                                    <button onClick={() => deleteAcc(acc.id)} className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white transition shadow-lg"><i className="fas fa-trash-alt text-[10px]"></i></button>
+                                                </td>
+                                            </tr>
+                                        )
+                                    })}
+                                    {filteredAccounts.length === 0 && (
+                                        <tr><td colSpan="5" className="py-20 text-center text-slate-600 italic">No accounts recorded.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

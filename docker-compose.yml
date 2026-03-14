@@ -1,0 +1,8 @@
+services:
+  ms-mail-manager:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./accounts.json:/app/accounts.json
+    restart: always
