@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mail-Nexus V4.1 | Light Edition</title>
+    <title>Mail-Nexus V4.4 | Detail Focus Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -19,6 +19,7 @@
         .code-display { font-family: 'JetBrains Mono', monospace; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
     </style>
 </head>
 <body>
@@ -46,6 +47,8 @@
             const [search, setSearch] = useState("");
             const [loading, setLoading] = useState(false);
             const [showImport, setShowImport] = useState(false);
+            const [visiblePwds, setVisiblePwds] = useState(new Set());
+            const [detail, setDetail] = useState(null);
 
             const API_BASE = window.location.origin === 'null' || window.location.origin === 'file://' 
                 ? "http://localhost:8000" : window.location.origin;
@@ -57,6 +60,13 @@
             };
 
             useEffect(() => { fetchAccounts(); }, []);
+
+            const togglePwd = (id) => {
+                const newSet = new Set(visiblePwds);
+                if (newSet.has(id)) newSet.delete(id);
+                else newSet.add(id);
+                setVisiblePwds(newSet);
+            };
 
             const markAction = async (endpoint, email) => {
                 const safeEmail = encodeURIComponent(email);
@@ -119,9 +129,9 @@
                     <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-8">
                         <div>
                             <h1 className="text-4xl font-black tracking-tight text-slate-900 flex items-center gap-4">
-                                Mail-Nexus <span className="text-blue-600 text-sm font-black uppercase bg-blue-50 px-3 py-1 rounded-lg">V4.1</span>
+                                Mail-Nexus <span className="text-blue-600 text-sm font-black uppercase bg-blue-50 px-3 py-1 rounded-lg">V4.4</span>
                             </h1>
-                            <p className="text-slate-400 mt-2 font-semibold">Clean Multi-Service Management Hub</p>
+                            <p className="text-slate-400 mt-2 font-semibold">Verification link & Code focus manager</p>
                         </div>
                         <div className="flex items-center gap-4 w-full md:w-auto">
                             <div className="relative flex-1 md:w-96">
@@ -169,11 +179,45 @@
                         </div>
                     )}
 
+                    {/* Detail Modal */}
+                    {detail && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-6 animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[40px] p-10 max-w-2xl w-full shadow-2xl animate-in zoom-in-95 duration-300 relative">
+                                <button onClick={() => setDetail(null)} className="absolute top-8 right-8 text-slate-300 hover:text-slate-600 transition-colors">
+                                    <i className="fas fa-times-circle text-2xl"></i>
+                                </button>
+                                <div className="mb-8">
+                                    <h3 className="text-2xl font-black text-slate-900 mb-2">Security Detail</h3>
+                                    <p className="text-slate-400 text-sm font-medium">Verify the full link or message content below.</p>
+                                </div>
+                                <div className="bg-slate-50 p-8 rounded-[24px] border border-slate-100 break-all font-mono text-sm text-slate-600 max-h-[40vh] overflow-y-auto mb-8 leading-relaxed shadow-inner">
+                                    {detail}
+                                </div>
+                                <div className="flex flex-col sm:flex-row gap-4">
+                                    <button 
+                                        onClick={() => { navigator.clipboard.writeText(detail); }}
+                                        className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold transition btn-action shadow-xl shadow-slate-900/20 flex items-center justify-center gap-3"
+                                    >
+                                        <i className="fas fa-copy"></i> Copy Content
+                                    </button>
+                                    {detail.startsWith('http') && (
+                                        <a 
+                                            href={detail} target="_blank" rel="noopener noreferrer"
+                                            className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold transition btn-action shadow-xl shadow-blue-600/20 flex items-center justify-center gap-3"
+                                        >
+                                            <i className="fas fa-external-link-alt"></i> Open URL
+                                        </a>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Account Grid */}
                     <div className="space-y-6">
                         <div className="flex items-center px-10 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">
-                            <div className="w-[45%]">Account Metadata</div>
-                            <div className="w-[20%] text-center">Latest Code</div>
+                            <div className="w-[40%]">Account Metadata</div>
+                            <div className="w-[25%] text-center">Security Info</div>
                             <div className="w-[12%] text-center">Perplexity</div>
                             <div className="w-[12%] text-center">Tavily</div>
                             <div className="w-[11%] text-right">Actions</div>
@@ -184,41 +228,72 @@
                             const tStatus = getStatus(acc.tavily_used_date);
                             const isOutlook = acc.type === 'outlook';
                             const domain = acc.id.split('@')[1] || '';
+                            const isLink = acc.latest_code && acc.latest_code.startsWith('http');
+                            const val = acc.latest_code || '---';
 
                             return (
                                 <div key={acc.id} className="light-card p-6 rounded-[32px] flex items-center hover:shadow-xl hover:shadow-slate-200/50 transition-all group relative overflow-hidden">
-                                    <div className="w-[45%] flex items-center gap-5">
-                                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-black shadow-sm ${isOutlook ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                                            {domain.charAt(0).toUpperCase()}
+                                    <div className="w-[40%] flex flex-col justify-center">
+                                        <div className="flex items-center gap-5">
+                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-black shadow-sm ${isOutlook ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                                                {domain.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div 
+                                                className="group/mail cursor-pointer hover:bg-slate-50 p-2 -ml-2 rounded-xl transition-all active:scale-[0.98]"
+                                                onClick={() => navigator.clipboard.writeText(acc.id)}
+                                                title="Click to copy email"
+                                            >
+                                                <div className="text-base font-extrabold text-slate-900 break-all leading-tight flex items-center gap-2">
+                                                    {acc.id}
+                                                    <i className="fas fa-copy text-slate-200 group-hover/mail:text-blue-400 text-[10px] transition-colors"></i>
+                                                </div>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${isOutlook ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+                                                        {isOutlook ? 'OFFICIAL OAUTH' : 'IMAP ACCESS'}
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">{domain}</span>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div 
-                                            className="group/mail cursor-pointer hover:bg-slate-50 p-2 -ml-2 rounded-xl transition-all active:scale-[0.98]"
-                                            onClick={() => {
-                                                navigator.clipboard.writeText(acc.id);
-                                                // Optional: Add a temporary tooltip or notification logic here
-                                            }}
-                                            title="Click to copy email"
-                                        >
-                                            <div className="text-base font-extrabold text-slate-900 break-all leading-tight flex items-center gap-2">
-                                                {acc.id}
-                                                <i className="fas fa-copy text-slate-200 group-hover/mail:text-blue-400 text-[10px] transition-colors"></i>
-                                            </div>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${isOutlook ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-                                                    {isOutlook ? 'OFFICIAL OAUTH' : 'IMAP ACCESS'}
+                                        <div className="flex items-center gap-4 mt-2 ml-16">
+                                            <div 
+                                                className="flex items-center gap-2 group/pwd cursor-pointer hover:bg-slate-50 px-2 py-1 rounded-lg transition-all"
+                                                onClick={() => navigator.clipboard.writeText(acc.password)}
+                                                title="Click to copy password"
+                                            >
+                                                <i className="fas fa-key text-[10px] text-slate-300 group-hover/pwd:text-blue-500"></i>
+                                                <span className="text-[11px] font-mono text-slate-400 group-hover/pwd:text-slate-600 tracking-wider">
+                                                    {visiblePwds.has(acc.id) ? acc.password : '••••••••'}
                                                 </span>
-                                                <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">{domain}</span>
+                                                <i className="fas fa-copy text-slate-200 group-hover/pwd:text-blue-300 text-[9px]"></i>
                                             </div>
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); togglePwd(acc.id); }}
+                                                className="text-slate-300 hover:text-blue-500 transition-colors"
+                                            >
+                                                <i className={`fas ${visiblePwds.has(acc.id) ? 'fa-eye-slash' : 'fa-eye'} text-[10px]`}></i>
+                                            </button>
                                         </div>
                                     </div>
 
-                                    <div className="w-[20%] flex flex-col items-center">
+                                    <div className="w-[25%] flex flex-col items-center px-4">
                                         <div 
-                                            className="code-display text-2xl font-black bg-slate-50 hover:bg-blue-50 px-6 py-2 rounded-[18px] border border-slate-100 text-blue-600 cursor-pointer transition active:scale-95 flex items-center gap-3 group/code"
-                                            onClick={() => acc.latest_code !== '---' && navigator.clipboard.writeText(acc.latest_code)}
+                                            onClick={() => setDetail(val)}
+                                            className={`w-full group/info cursor-pointer rounded-2xl border p-2.5 transition-all active:scale-95 flex flex-col items-center ${isLink ? 'bg-blue-50 border-blue-100 hover:border-blue-300' : 'bg-slate-50 border-slate-100 hover:border-blue-300'}`}
                                         >
-                                            {acc.latest_code}
-                                            <i className="fas fa-copy text-slate-200 group-hover/code:text-blue-300 text-sm"></i>
+                                            {isLink ? (
+                                                <div className="flex items-center gap-2 text-blue-600 w-full px-2">
+                                                    <i className="fas fa-link text-xs"></i>
+                                                    <span className="text-[10px] font-black uppercase tracking-tighter line-clamp-1">VERIFY URL DETECTED</span>
+                                                </div>
+                                            ) : (
+                                                <div className={`text-center font-black ${val.length > 10 ? 'text-[10px] text-slate-500 italic px-2 line-clamp-2' : 'text-2xl text-blue-600 code-display'}`}>
+                                                    {val}
+                                                </div>
+                                            )}
+                                            <div className="mt-1 opacity-0 group-hover/info:opacity-100 transition-opacity text-[8px] font-bold text-blue-400 uppercase tracking-widest">
+                                                Click to view full
+                                            </div>
                                         </div>
                                         <div className="text-[9px] text-slate-400 mt-2 font-bold flex items-center gap-1">
                                             <i className="far fa-clock"></i> {acc.last_update}
@@ -228,7 +303,7 @@
                                     <div className="w-[12%] flex justify-center">
                                         <button 
                                             onClick={() => markAction('mark_used', acc.id)}
-                                            className={`w-24 py-2.5 rounded-2xl border flex flex-col items-center btn-action ${pStatus.bg} ${pStatus.ready ? 'border-emerald-100' : 'border-amber-100'}`}
+                                            className={`w-24 py-2.5 rounded-2xl border flex flex-col items-center btn-action ${pStatus.bg} ${pStatus.ready ? 'border-emerald-100' : 'border-emerald-500/10'}`}
                                         >
                                             <span className={`text-[10px] font-black uppercase tracking-wider ${pStatus.color}`}>{pStatus.label}</span>
                                             <span className="text-[9px] text-slate-400 font-bold">{pStatus.sub}</span>
@@ -238,7 +313,7 @@
                                     <div className="w-[12%] flex justify-center">
                                         <button 
                                             onClick={() => markTavilyUsed(acc.id)}
-                                            className={`w-24 py-2.5 rounded-2xl border flex flex-col items-center btn-action ${tStatus.bg} ${tStatus.ready ? 'border-emerald-100' : 'border-amber-100'}`}
+                                            className={`w-24 py-2.5 rounded-2xl border flex flex-col items-center btn-action ${tStatus.bg} ${tStatus.ready ? 'border-emerald-100' : 'border-emerald-500/10'}`}
                                         >
                                             <span className={`text-[10px] font-black uppercase tracking-wider ${tStatus.color}`}>{tStatus.label}</span>
                                             <span className="text-[9px] text-slate-400 font-bold">{tStatus.sub}</span>
@@ -269,7 +344,6 @@
                                     <i className="fas fa-inbox text-3xl text-slate-200"></i>
                                 </div>
                                 <div className="text-slate-400 font-extrabold uppercase tracking-widest">No accounts found</div>
-                                <p className="text-slate-300 text-xs mt-2">Try importing or checking your filter</p>
                             </div>
                         )}
                     </div>

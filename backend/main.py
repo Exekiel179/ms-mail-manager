@@ -16,7 +16,7 @@ from urllib.parse import unquote
 
 app = FastAPI()
 
-# 获取项目根目录下的 accounts.json
+# 路径配置
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DB_FILE = os.path.join(BASE_DIR, "accounts.json")
 frontend_path = os.path.join(BASE_DIR, "frontend")
@@ -35,12 +35,27 @@ app.add_middleware(
 )
 
 def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except: return {}
-    return {}
+    if not os.path.exists(DB_FILE): return {}
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            db = json.load(f)
+            # 自动迁移旧数据：修复缺失 type 字段的问题
+            changed = False
+            for email_addr, acc in db.items():
+                if "type" not in acc:
+                    if acc.get("refresh_token") and len(acc["refresh_token"]) > 20:
+                        acc["type"] = "outlook"
+                    else:
+                        acc["type"] = "imap"
+                        if "imap_host" not in acc:
+                            domain = email_addr.split("@")[-1]
+                            acc["imap_host"] = f"imap.{domain}"
+                    changed = True
+            if changed: save_db(db)
+            return db
+    except Exception as e:
+        print(f"Load DB Error: {e}")
+        return {}
 
 def save_db(data):
     with open(DB_FILE, "w", encoding="utf-8") as f:
@@ -48,17 +63,44 @@ def save_db(data):
 
 def extract_code(text):
     if not text: return "---"
-    # 优先匹配常见的 6 位数字，然后是 4-7 位
+    
+    # 0. 优先从 HTML href 属性中提取完整链接
+    href_links = re.findall(r'href=["\'](https?://[^"\']+)["\']', text)
+    for link in href_links:
+        l_lower = link.lower()
+        if "ticket=" in l_lower or any(k in l_lower for k in ["verify", "email-verification", "confirm", "auth"]):
+            return link.strip()
+
+    # 1. 预处理：清理空白
+    clean_text = " ".join(text.split())
+    
+    # 2. 引导词匹配
     patterns = [
-        r'\b(\d{6})\b',
-        r'\b(\d{4,7})\b',
-        r'code is[:\s]+([A-Z0-9]{4,8})', # 针对某些字母数字混合的验证码
-        r'verification code[:\s]+(\d+)'
+        r'code is[:\s]+([A-Z0-9]{4,8})',
+        r'verification code[:\s]+([A-Z0-9]{4,8})',
+        r'login code[:\s]+([A-Z0-9]{4,8})',
+        r'码是[:\s]+([A-Z0-9]{4,8})',
+        r'验证码[:\s]+(\d+)'
     ]
     for p in patterns:
-        match = re.search(p, text, re.IGNORECASE)
-        if match: return match.group(1 if len(match.groups()) > 0 else 0)
-    return "---"
+        match = re.search(p, clean_text, re.IGNORECASE)
+        if match: return match.group(1).strip()
+    
+    # 3. 独立数字块
+    match_anyd = re.search(r'\b(\d{4,8})\b', clean_text)
+    if match_anyd: return match_anyd.group(1)
+    
+    # 4. 纯文本中的链接
+    urls = re.findall(r'https?://[^\s<>"]+', text)
+    for url in urls:
+        if any(k in url.lower() for k in ["verify", "login", "confirm", "auth", "ticket="]):
+            return url.strip()
+            
+    # 5. 兜底摘要 (2000字)
+    snippet = re.sub(r'<[^>]+>', ' ', text)
+    snippet = " ".join(snippet.split()).strip()
+    return snippet[:2000] if snippet else "---"
+
 
 def get_ms_token(client_id: str, refresh_token: str):
     url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
@@ -73,11 +115,13 @@ def get_ms_token(client_id: str, refresh_token: str):
         if resp.ok:
             d = resp.json()
             return d.get("access_token"), d.get("refresh_token")
-    except: pass
+    except Exception as e:
+        print(f"MS Token Error: {e}")
     return None, None
 
 def get_imap_code(host, user, password):
     try:
+        # 针对 Gmail/QQ 等可能需要 SSL 的情况
         mail = imaplib.IMAP4_SSL(host)
         mail.login(user, password)
         mail.select("inbox")
@@ -89,22 +133,31 @@ def get_imap_code(host, user, password):
         for response_part in msg_data:
             if isinstance(response_part, tuple):
                 msg = email.message_from_bytes(response_part[1])
-                subject = decode_header(msg["Subject"])[0][0]
-                if isinstance(subject, bytes): subject = subject.decode()
                 
+                # 尝试解码标题
+                subject_raw = decode_header(msg["Subject"])
+                subject = ""
+                for part, enc in subject_raw:
+                    if isinstance(part, bytes):
+                        subject += part.decode(enc or 'utf-8', errors='ignore')
+                    else:
+                        subject += part
+                
+                # 尝试解码正文
                 body = ""
                 if msg.is_multipart():
                     for part in msg.walk():
-                        if part.get_content_type() == "text/plain":
-                            body = part.get_payload(decode=True).decode()
-                            break
+                        if part.get_content_type() in ["text/plain", "text/html"]:
+                            try:
+                                body += part.get_payload(decode=True).decode(errors='ignore')
+                            except: pass
                 else:
-                    body = msg.get_payload(decode=True).decode()
+                    body = msg.get_payload(decode=True).decode(errors='ignore')
                 
                 mail.logout()
                 return extract_code(subject + " " + body)
     except Exception as e:
-        print(f"IMAP Error: {e}")
+        print(f"IMAP Error ({user}): {e}")
     return "---"
 
 @app.get("/accounts")
@@ -118,38 +171,35 @@ def import_accounts(bulk_data: dict):
     db = load_db()
     for line in lines:
         parts = line.strip().split("----")
+        if not parts: continue
         email_addr = parts[0].strip()
         
-        # 判断类型
-        if len(parts) >= 4 and "----" in line and len(parts[2]) > 20: # 微软 OAuth 格式
+        if len(parts) >= 4 and len(parts[2]) > 20: # Outlook OAuth
             pwd, cid, rtoken = parts[1], parts[2], parts[3]
             acc_type = "outlook"
-        else: # 账号密码格式 (IMAP)
+            host = ""
+        else: # IMAP
             pwd = parts[1] if len(parts) > 1 else ""
             cid, rtoken = "", ""
             acc_type = "imap"
-            # 自动识别 IMAP 服务器
             domain = email_addr.split("@")[-1]
             if "gmail" in domain: host = "imap.gmail.com"
             elif "qq.com" in domain: host = "imap.qq.com"
             elif "163.com" in domain: host = "imap.163.com"
             else: host = f"imap.{domain}"
         
-        if email_addr not in db:
-            db[email_addr] = {
-                "id": email_addr,
-                "password": pwd,
-                "client_id": cid,
-                "refresh_token": rtoken,
-                "type": acc_type,
-                "imap_host": host if acc_type == "imap" else "",
-                "latest_code": "---",
-                "last_update": "Never",
-                "perplexity_used_date": None,
-                "tavily_used_date": None
-            }
-        else:
-            db[email_addr].update({"password": pwd, "client_id": cid, "refresh_token": rtoken})
+        db[email_addr] = {
+            "id": email_addr,
+            "password": pwd,
+            "client_id": cid,
+            "refresh_token": rtoken,
+            "type": acc_type,
+            "imap_host": host,
+            "latest_code": "---",
+            "last_update": "Never",
+            "perplexity_used_date": db.get(email_addr, {}).get("perplexity_used_date"),
+            "tavily_used_date": db.get(email_addr, {}).get("tavily_used_date")
+        }
     save_db(db)
     return {"status": "success"}
 
@@ -177,22 +227,30 @@ def mark_tavily_used(email: str):
 def refresh_single(email: str):
     email = unquote(email)
     db = load_db()
-    if email not in db: raise HTTPException(status_code=404)
+    if email not in db: return {"status": "not_found"}
     acc = db[email]
     
     code = "---"
-    if acc.get("type") == "outlook":
-        access_token, new_rtoken = get_ms_token(acc["client_id"], acc["refresh_token"])
-        if access_token:
-            if new_rtoken: db[email]["refresh_token"] = new_rtoken
-            try:
-                res = requests.get("https://graph.microsoft.com/v1.0/me/messages?$top=1", headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+    try:
+        if acc.get("type") == "outlook":
+            access_token, new_rtoken = get_ms_token(acc["client_id"], acc["refresh_token"])
+            if access_token:
+                if new_rtoken: db[email]["refresh_token"] = new_rtoken
+                # 关键：请求 body 字段以获取 HTML 全文
+                res = requests.get("https://graph.microsoft.com/v1.0/me/messages?$top=1&$select=subject,body,bodyPreview", headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
                 if res.ok:
-                    m = res.json().get("value", [])[0]
-                    code = extract_code(m.get("subject", "") + " " + m.get("bodyPreview", ""))
-            except: pass
-    else: # IMAP
-        code = get_imap_code(acc.get("imap_host", "imap.qq.com"), acc["id"], acc["password"])
+                    m_list = res.json().get("value", [])
+                    if m_list:
+                        m = m_list[0]
+                        # 优先从 body.content 中提取，那里有完整的 HTML 和链接
+                        full_content = m.get("body", {}).get("content", "") or m.get("bodyPreview", "")
+                        code = extract_code(m.get("subject", "") + " " + full_content)
+            else:
+                print(f"MS Auth Failed for {email}")
+        else: # IMAP
+            code = get_imap_code(acc.get("imap_host", "imap.qq.com"), acc["id"], acc["password"])
+    except Exception as e:
+        print(f"Refresh Error ({email}): {e}")
 
     db[email]["latest_code"] = code
     db[email]["last_update"] = time.strftime("%H:%M:%S")
