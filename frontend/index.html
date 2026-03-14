@@ -3,18 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MS-Mail-Nexus V3.1 | Monthly Usage Tracker</title>
+    <title>Mail-Nexus V4.1 | Light Edition</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
     <style>
-        body { background-color: #020617; color: #e2e8f0; font-family: 'Inter', sans-serif; }
-        .glass { background: rgba(30, 41, 59, 0.5); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.05); }
-        .code-box { font-family: 'JetBrains Mono', monospace; cursor: pointer; }
-        .btn-used { transition: all 0.2s; cursor: pointer; }
-        .btn-used:hover { transform: translateY(-2px); }
+        body { background-color: #f8fafc; color: #0f172a; font-family: 'Plus Jakarta Sans', sans-serif; }
+        .light-card { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1); }
+        .btn-action { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .btn-action:hover { transform: translateY(-1px); filter: brightness(0.95); }
+        .btn-action:active { transform: translateY(0); }
+        .code-display { font-family: 'JetBrains Mono', monospace; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
     </style>
 </head>
 <body>
@@ -23,15 +27,28 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
+        const StatCard = ({ label, value, sub, icon, color, textColor }) => (
+            <div className="light-card p-6 rounded-[24px] flex items-center gap-5">
+                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${color} bg-opacity-10`}>
+                    <i className={`fas ${icon} ${textColor} text-xl`}></i>
+                </div>
+                <div>
+                    <div className="text-slate-500 text-[11px] font-bold uppercase tracking-wider">{label}</div>
+                    <div className="text-3xl font-extrabold text-slate-900 leading-tight">{value}</div>
+                    <div className="text-[10px] text-slate-400 font-medium">{sub}</div>
+                </div>
+            </div>
+        );
+
         const App = () => {
             const [accounts, setAccounts] = useState([]);
             const [bulkInput, setBulkInput] = useState("");
             const [search, setSearch] = useState("");
             const [loading, setLoading] = useState(false);
+            const [showImport, setShowImport] = useState(false);
 
             const API_BASE = window.location.origin === 'null' || window.location.origin === 'file://' 
-                ? "http://localhost:8000" 
-                : window.location.origin;
+                ? "http://localhost:8000" : window.location.origin;
 
             const fetchAccounts = async () => {
                 const res = await fetch(`${API_BASE}/accounts`);
@@ -41,165 +58,221 @@
 
             useEffect(() => { fetchAccounts(); }, []);
 
-            const markUsed = async (email) => {
+            const markAction = async (endpoint, email) => {
                 const safeEmail = encodeURIComponent(email);
-                await fetch(`${API_BASE}/mark_used/${safeEmail}`, { method: 'POST' });
-                fetchAccounts();
-            };
-
-            const markTavilyUsed = async (email) => {
-                const safeEmail = encodeURIComponent(email);
-                await fetch(`${API_BASE}/mark_tavily_used/${safeEmail}`, { method: 'POST' });
+                await fetch(`${API_BASE}/${endpoint}/${safeEmail}`, { method: 'POST' });
                 fetchAccounts();
             };
 
             const refreshOne = async (email) => {
                 const safeEmail = encodeURIComponent(email);
-                setLoading(true);
-                await fetch(`${API_BASE}/refresh/${safeEmail}`, { method: 'POST' });
-                fetchAccounts();
-                setLoading(false);
+                setLoading(email);
+                try {
+                    await fetch(`${API_BASE}/refresh/${safeEmail}`, { method: 'POST' });
+                    fetchAccounts();
+                } finally { setLoading(null); }
             };
 
             const deleteAcc = async (email) => {
                 if(!confirm(`Delete ${email}?`)) return;
-                const safeEmail = encodeURIComponent(email);
-                await fetch(`${API_BASE}/account/${safeEmail}`, { method: 'DELETE' });
+                await fetch(`${API_BASE}/account/${encodeURIComponent(email)}`, { method: 'DELETE' });
                 fetchAccounts();
             };
 
             const handleImport = async () => {
-                setLoading(true);
+                if(!bulkInput) return;
+                setLoading('import');
                 await fetch(`${API_BASE}/import`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ data: bulkInput })
                 });
                 setBulkInput("");
+                setShowImport(false);
                 fetchAccounts();
-                setLoading(false);
+                setLoading(null);
             };
 
-            const getStatusByDate = (usedDate) => {
-                if (!usedDate) return { label: "可用", color: "text-green-400", sub: "未标记", ready: true };
-                
+            const getStatus = (usedDate) => {
+                if (!usedDate) return { label: "Ready", color: "text-emerald-600", bg: "bg-emerald-50", sub: "Available", ready: true };
                 const used = new Date(usedDate);
-                const now = new Date();
-                const diffTime = now - used;
-                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                const diffDays = Math.floor((new Date() - used) / (1000 * 60 * 60 * 24));
                 const remaining = 30 - diffDays;
-
-                if (remaining <= 0) return { label: "可用", color: "text-green-400", sub: "周期已过", ready: true };
-                return { label: "已占用", color: "text-yellow-500", sub: `剩余 ${remaining} 天`, ready: false };
+                if (remaining <= 0) return { label: "Ready", color: "text-emerald-600", bg: "bg-emerald-50", sub: "Cycle Passed", ready: true };
+                return { label: "Locked", color: "text-amber-600", bg: "bg-amber-50", sub: `${remaining}d Left`, ready: false };
             };
+
+            const stats = useMemo(() => {
+                const total = accounts.length;
+                const pFree = accounts.filter(a => getStatus(a.perplexity_used_date).ready).length;
+                const tFree = accounts.filter(a => getStatus(a.tavily_used_date).ready).length;
+                return { total, pFree, tFree };
+            }, [accounts]);
 
             const filteredAccounts = useMemo(() => {
                 return accounts.filter(acc => acc.id.toLowerCase().includes(search.toLowerCase()));
             }, [accounts, search]);
 
             return (
-                <div className="min-h-screen p-4 md:p-8">
-                    <header className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
-                                <i className="fas fa-calendar-check text-2xl text-white"></i>
-                            </div>
-                            <div>
-                                <h1 className="text-3xl font-extrabold text-white tracking-tight">Mail-Nexus <span className="text-blue-500 text-sm font-normal">V3.1</span></h1>
-                                <p className="text-slate-500 text-sm">Perplexity & Tavily Usage Tracker</p>
-                            </div>
+                <div className="min-h-screen p-6 md:p-12 max-w-7xl mx-auto">
+                    {/* Header */}
+                    <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-8">
+                        <div>
+                            <h1 className="text-4xl font-black tracking-tight text-slate-900 flex items-center gap-4">
+                                Mail-Nexus <span className="text-blue-600 text-sm font-black uppercase bg-blue-50 px-3 py-1 rounded-lg">V4.1</span>
+                            </h1>
+                            <p className="text-slate-400 mt-2 font-semibold">Clean Multi-Service Management Hub</p>
                         </div>
-                        <input 
-                            type="text" placeholder="Search accounts..." 
-                            className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-sm outline-none focus:border-blue-500 w-64"
-                            value={search} onChange={(e) => setSearch(e.target.value)}
-                        />
-                    </header>
-
-                    <main className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-4 gap-8">
-                        <div className="xl:col-span-1 glass p-6 rounded-3xl h-fit">
-                            <h2 className="text-lg font-bold mb-4">Import Accounts</h2>
-                            <textarea 
-                                className="w-full h-80 bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs font-mono outline-none focus:border-blue-500 resize-none"
-                                placeholder="email----password----client_id----refresh_token"
-                                value={bulkInput} onChange={(e) => setBulkInput(e.target.value)}
-                            ></textarea>
-                            <button onClick={handleImport} className="w-full mt-4 bg-blue-600 hover:bg-blue-500 py-3 rounded-2xl font-bold transition active:scale-95 shadow-lg shadow-blue-600/20">
-                                {loading ? "Processing..." : "Add Accounts"}
+                        <div className="flex items-center gap-4 w-full md:w-auto">
+                            <div className="relative flex-1 md:w-96">
+                                <i className="fas fa-search absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                                <input 
+                                    type="text" placeholder="Search accounts..." 
+                                    className="w-full bg-white border border-slate-200 rounded-2xl pl-12 pr-4 py-3.5 text-sm focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 outline-none transition"
+                                    value={search} onChange={(e) => setSearch(e.target.value)}
+                                />
+                            </div>
+                            <button 
+                                onClick={() => setShowImport(!showImport)}
+                                className="bg-slate-900 hover:bg-slate-800 text-white px-8 py-3.5 rounded-2xl font-bold flex items-center gap-2 transition btn-action shadow-lg shadow-slate-900/10"
+                            >
+                                <i className="fas fa-file-import"></i>
+                                <span>Import</span>
                             </button>
                         </div>
+                    </header>
 
-                        <div className="xl:col-span-3 glass rounded-3xl overflow-hidden border border-white/5">
-                            <table className="w-full text-left">
-                                <thead>
-                                    <tr className="bg-slate-900/50 text-slate-400 text-[10px] uppercase font-bold tracking-widest">
-                                        <th className="px-6 py-4">Account Metadata</th>
-                                        <th className="px-6 py-4">Verification Code</th>
-                                        <th className="px-6 py-4 text-center">Perplexity (30d)</th>
-                                        <th className="px-6 py-4 text-center">Tavily (30d)</th>
-                                        <th className="px-6 py-4 text-right">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-white/5">
-                                    {filteredAccounts.map(acc => {
-                                        const pStatus = getStatusByDate(acc.perplexity_used_date);
-                                        const tStatus = getStatusByDate(acc.tavily_used_date);
-                                        return (
-                                            <tr key={acc.id} className="hover:bg-white/[0.02] transition">
-                                                <td className="px-6 py-4">
-                                                    <div className="text-sm font-semibold">{acc.id}</div>
-                                                    <div className="text-[10px] text-slate-500 mt-1 font-mono">ID: {acc.client_id.slice(0,8)}...</div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div 
-                                                        className="inline-block px-3 py-1 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg font-bold code-box" 
-                                                        onClick={() => acc.latest_code !== '---' && navigator.clipboard.writeText(acc.latest_code)}
-                                                    >
-                                                        {acc.latest_code}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="flex flex-col items-center">
-                                                        <div 
-                                                            onClick={() => markUsed(acc.id)}
-                                                            className={`btn-used flex items-center gap-2 px-3 py-1.5 rounded-xl border ${pStatus.ready ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}
-                                                        >
-                                                            <i className={`fas ${pStatus.ready ? 'fa-circle-check' : 'fa-hourglass-half'} ${pStatus.color} text-xs`}></i>
-                                                            <div className="text-left">
-                                                                <div className={`text-[10px] font-black uppercase ${pStatus.color}`}>{pStatus.label}</div>
-                                                                <div className="text-[8px] text-slate-500">{pStatus.sub}</div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="flex flex-col items-center">
-                                                        <div 
-                                                            onClick={() => markTavilyUsed(acc.id)}
-                                                            className={`btn-used flex items-center gap-2 px-3 py-1.5 rounded-xl border ${tStatus.ready ? 'bg-green-500/10 border-green-500/30' : 'bg-yellow-500/10 border-yellow-500/30'}`}
-                                                        >
-                                                            <i className={`fas ${tStatus.ready ? 'fa-circle-check' : 'fa-hourglass-half'} ${tStatus.color} text-xs`}></i>
-                                                            <div className="text-left">
-                                                                <div className={`text-[10px] font-black uppercase ${tStatus.color}`}>{tStatus.label}</div>
-                                                                <div className="text-[8px] text-slate-500">{tStatus.sub}</div>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 text-right space-x-2 whitespace-nowrap">
-                                                    <button onClick={() => refreshOne(acc.id)} className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-blue-600 text-slate-400 hover:text-white transition shadow-lg"><i className="fas fa-sync-alt text-[10px]"></i></button>
-                                                    <button onClick={() => deleteAcc(acc.id)} className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-red-600 text-slate-400 hover:text-white transition shadow-lg"><i className="fas fa-trash-alt text-[10px]"></i></button>
-                                                </td>
-                                            </tr>
-                                        )
-                                    })}
-                                    {filteredAccounts.length === 0 && (
-                                        <tr><td colSpan="5" className="py-20 text-center text-slate-600 italic">No accounts recorded.</td></tr>
-                                    )}
-                                </tbody>
-                            </table>
+                    {/* Stats Dashboard */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
+                        <StatCard label="Total Accounts" value={stats.total} sub="Connected mailboxes" icon="fa-inbox" color="bg-blue-600" textColor="text-blue-600" />
+                        <StatCard label="Perplexity Available" value={stats.pFree} sub="Active 30d slots" icon="fa-bolt" color="bg-emerald-600" textColor="text-emerald-600" />
+                        <StatCard label="Tavily Available" value={stats.tFree} sub="Active 30d slots" icon="fa-search-plus" color="bg-amber-600" textColor="text-amber-600" />
+                    </div>
+
+                    {/* Import Area */}
+                    {showImport && (
+                        <div className="light-card p-8 rounded-[32px] mb-12 animate-in fade-in slide-in-from-top-6 duration-300">
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-xl font-extrabold flex items-center gap-3"><i className="fas fa-magic text-blue-500"></i> Batch Import Accounts</h2>
+                                <button onClick={() => setShowImport(false)} className="text-slate-400 hover:text-slate-600"><i className="fas fa-times text-xl"></i></button>
+                            </div>
+                            <textarea 
+                                className="w-full h-48 bg-slate-50 border border-slate-200 rounded-[20px] p-5 text-sm font-mono outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 resize-none mb-6 text-slate-600"
+                                placeholder="Outlook: email----pwd----cid----refresh_token&#10;IMAP (QQ/163): email----password"
+                                value={bulkInput} onChange={(e) => setBulkInput(e.target.value)}
+                            ></textarea>
+                            <div className="flex justify-end">
+                                <button onClick={handleImport} className="bg-blue-600 text-white px-12 py-3.5 rounded-2xl font-black transition btn-action shadow-lg shadow-blue-600/20">
+                                    {loading === 'import' ? 'Analyzing...' : 'Execute Import'}
+                                </button>
+                            </div>
                         </div>
-                    </main>
+                    )}
+
+                    {/* Account Grid */}
+                    <div className="space-y-6">
+                        <div className="flex items-center px-10 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">
+                            <div className="w-[45%]">Account Metadata</div>
+                            <div className="w-[20%] text-center">Latest Code</div>
+                            <div className="w-[12%] text-center">Perplexity</div>
+                            <div className="w-[12%] text-center">Tavily</div>
+                            <div className="w-[11%] text-right">Actions</div>
+                        </div>
+
+                        {filteredAccounts.map(acc => {
+                            const pStatus = getStatus(acc.perplexity_used_date);
+                            const tStatus = getStatus(acc.tavily_used_date);
+                            const isOutlook = acc.type === 'outlook';
+                            const domain = acc.id.split('@')[1] || '';
+
+                            return (
+                                <div key={acc.id} className="light-card p-6 rounded-[32px] flex items-center hover:shadow-xl hover:shadow-slate-200/50 transition-all group relative overflow-hidden">
+                                    <div className="w-[45%] flex items-center gap-5">
+                                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-black shadow-sm ${isOutlook ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                                            {domain.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div 
+                                            className="group/mail cursor-pointer hover:bg-slate-50 p-2 -ml-2 rounded-xl transition-all active:scale-[0.98]"
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(acc.id);
+                                                // Optional: Add a temporary tooltip or notification logic here
+                                            }}
+                                            title="Click to copy email"
+                                        >
+                                            <div className="text-base font-extrabold text-slate-900 break-all leading-tight flex items-center gap-2">
+                                                {acc.id}
+                                                <i className="fas fa-copy text-slate-200 group-hover/mail:text-blue-400 text-[10px] transition-colors"></i>
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${isOutlook ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+                                                    {isOutlook ? 'OFFICIAL OAUTH' : 'IMAP ACCESS'}
+                                                </span>
+                                                <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">{domain}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="w-[20%] flex flex-col items-center">
+                                        <div 
+                                            className="code-display text-2xl font-black bg-slate-50 hover:bg-blue-50 px-6 py-2 rounded-[18px] border border-slate-100 text-blue-600 cursor-pointer transition active:scale-95 flex items-center gap-3 group/code"
+                                            onClick={() => acc.latest_code !== '---' && navigator.clipboard.writeText(acc.latest_code)}
+                                        >
+                                            {acc.latest_code}
+                                            <i className="fas fa-copy text-slate-200 group-hover/code:text-blue-300 text-sm"></i>
+                                        </div>
+                                        <div className="text-[9px] text-slate-400 mt-2 font-bold flex items-center gap-1">
+                                            <i className="far fa-clock"></i> {acc.last_update}
+                                        </div>
+                                    </div>
+
+                                    <div className="w-[12%] flex justify-center">
+                                        <button 
+                                            onClick={() => markAction('mark_used', acc.id)}
+                                            className={`w-24 py-2.5 rounded-2xl border flex flex-col items-center btn-action ${pStatus.bg} ${pStatus.ready ? 'border-emerald-100' : 'border-amber-100'}`}
+                                        >
+                                            <span className={`text-[10px] font-black uppercase tracking-wider ${pStatus.color}`}>{pStatus.label}</span>
+                                            <span className="text-[9px] text-slate-400 font-bold">{pStatus.sub}</span>
+                                        </button>
+                                    </div>
+
+                                    <div className="w-[12%] flex justify-center">
+                                        <button 
+                                            onClick={() => markTavilyUsed(acc.id)}
+                                            className={`w-24 py-2.5 rounded-2xl border flex flex-col items-center btn-action ${tStatus.bg} ${tStatus.ready ? 'border-emerald-100' : 'border-amber-100'}`}
+                                        >
+                                            <span className={`text-[10px] font-black uppercase tracking-wider ${tStatus.color}`}>{tStatus.label}</span>
+                                            <span className="text-[9px] text-slate-400 font-bold">{tStatus.sub}</span>
+                                        </button>
+                                    </div>
+
+                                    <div className="w-[11%] flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-all transform translate-x-4 group-hover:translate-x-0">
+                                        <button 
+                                            onClick={() => refreshOne(acc.id)} 
+                                            className={`w-10 h-10 rounded-xl bg-slate-100 hover:bg-blue-600 hover:text-white flex items-center justify-center text-slate-400 transition ${loading === acc.id ? 'animate-spin bg-blue-50 text-blue-600' : ''}`}
+                                        >
+                                            <i className="fas fa-sync-alt text-sm"></i>
+                                        </button>
+                                        <button 
+                                            onClick={() => deleteAcc(acc.id)} 
+                                            className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-red-500 hover:text-white flex items-center justify-center text-slate-400 transition"
+                                        >
+                                            <i className="fas fa-trash-alt text-sm"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            )
+                        })}
+
+                        {filteredAccounts.length === 0 && (
+                            <div className="py-32 text-center bg-white rounded-[40px] border-2 border-dashed border-slate-200">
+                                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                                    <i className="fas fa-inbox text-3xl text-slate-200"></i>
+                                </div>
+                                <div className="text-slate-400 font-extrabold uppercase tracking-widest">No accounts found</div>
+                                <p className="text-slate-300 text-xs mt-2">Try importing or checking your filter</p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             );
         };
